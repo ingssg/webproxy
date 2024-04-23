@@ -61,6 +61,10 @@ void doit(int ctopfd)
     clienterror(ctopfd, method, "501", "Not implemented", "Tiny does not implement this method");
     return;
   }
+  if(!strcasecmp(uri, "/favicon.ico")) {
+    printf("ignore favicon\n");
+    return;
+  }
   parse_uri(uri, filename, hostname, port);
   printf("%s\n%s %s %s %s %s\n", uri, method, hostname, version, port, filename);
 
@@ -196,9 +200,13 @@ int read_responsehdrs(rio_t *rp, char *fd)
 
 int parse_uri(char *uri, char *filename, char *hostname, char *port)
 {
+  // printf("parsing uri is %s\n", uri);
+  // printf("empty? filename %s\n", filename);
+  
   char *start_idx = NULL, *port_idx = NULL, *path_idx = NULL;
-  *filename = '/';
-
+  
+  strcpy(filename, "/");
+  // printf("empty!!! filename %s\n", filename);
   if (*uri == '/') {
     uri += 1;
   }
@@ -214,6 +222,7 @@ int parse_uri(char *uri, char *filename, char *hostname, char *port)
   }
   strcpy(hostname, uri);
   if (port_idx == NULL) strcpy(port, "80");
+  // printf("parsing filename is %s\n", filename);
   
   return 0;
 
