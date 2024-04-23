@@ -11,6 +11,7 @@ int read_responsehdrs(rio_t *rp, char *fd);
 int parse_uri(char *uri, char *filename, char *hostname, char *port);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg);
+void sigchld_handler(int sig);
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr =
@@ -29,6 +30,8 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
+  Signal(SIGCHLD, sigchld_handler); // 좀
+
   listenfd = Open_listenfd(argv[1]);
   while (1) {
     clientlen = sizeof(clientaddr);
@@ -37,10 +40,23 @@ int main(int argc, char **argv) {
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE,
                 0);
     printf("Accepted connection from (%s, %s)\n", hostname, port);
-    doit(connfd);   // line:netp:tiny:doit
+    if(Fork() == 0) {
+      Close(listenfd);
+      doit(connfd);   // line:netp:tiny:doit
+      Close(connfd);
+      exit(0);
+    }
     Close(connfd);  // line:netp:tiny:close
   }
 }
+
+void sigchld_handler(int sig)
+{
+  while (waitpid(-1, 0, WNOHANG) > 0)
+  ;
+  return;
+}
+
 
 void doit(int ctopfd)
 {
