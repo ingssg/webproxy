@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "csapp.h"
+#include <pthread.h>
 
 /* Recommended max cache and object sizes */
 #define MAX_CACHE_SIZE 1049000
@@ -11,7 +12,8 @@ int read_responsehdrs(rio_t *rp, char *fd);
 int parse_uri(char *uri, char *filename, char *hostname, char *port);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg);
-void sigchld_handler(int sig);
+void *thread(void *vargp);
+
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr =
@@ -19,10 +21,11 @@ static const char *user_agent_hdr =
     "Firefox/10.0.3\r\n";
 
 int main(int argc, char **argv) {
-  int listenfd, connfd;
+  int listenfd, *connfd;
   char hostname[MAXLINE], port[MAXLINE];
   socklen_t clientlen;
   struct sockaddr_storage clientaddr;
+  pthread_t tid;
 
   /* Check command line args */
   if (argc != 2) {
@@ -30,33 +33,28 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
-  Signal(SIGCHLD, sigchld_handler); // 좀
-
   listenfd = Open_listenfd(argv[1]);
   while (1) {
     clientlen = sizeof(clientaddr);
-    connfd = Accept(listenfd, (SA *)&clientaddr,
+    connfd = Malloc(sizeof(int));
+    *connfd = Accept(listenfd, (SA *)&clientaddr,
                     &clientlen);  // line:netp:tiny:accept
     Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE,
                 0);
     printf("Accepted connection from (%s, %s)\n", hostname, port);
-    if(Fork() == 0) {
-      Close(listenfd);
-      doit(connfd);   // line:netp:tiny:doit
-      Close(connfd);
-      exit(0);
-    }
-    Close(connfd);  // line:netp:tiny:close
+    Pthread_create(&tid, NULL, thread, connfd);
+
   }
 }
 
-void sigchld_handler(int sig)
-{
-  while (waitpid(-1, 0, WNOHANG) > 0)
-  ;
-  return;
+void *thread(void *vargp) {
+  int connfd = *((int *)vargp);
+  Pthread_detach(pthread_self());
+  Free(vargp);
+  doit(connfd);
+  Close(connfd);
+  return NULL;
 }
-
 
 void doit(int ctopfd)
 {
