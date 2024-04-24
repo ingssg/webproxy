@@ -8,17 +8,30 @@
 
 void doit(int fd);
 void read_requesthdrs(rio_t *rp, char *fd, char *request_buf, char *hostname, char *port);
-int read_responsehdrs(rio_t *rp, char *fd);
+int *read_responsehdrs(rio_t *rp, char *fd);
 int parse_uri(char *uri, char *filename, char *hostname, char *port);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
                  char *longmsg);
 void *thread(void *vargp);
+cache *search_cache(char *uri);
 
 
 /* You won't lose style points for including this long line in your code */
 static const char *user_agent_hdr =
     "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 "
     "Firefox/10.0.3\r\n";
+
+typedef struct cache{
+  char uri[MAXLINE];
+  int content_length;
+  char *response_ptr;
+  cache *prev, *next;
+} cache;
+
+cache *rootp = NULL, *tailp = NULL;
+
+unsigned int current_size = 0;
+char cache_buf[MAX_CACHE_SIZE];
 
 int main(int argc, char **argv) {
   int listenfd, *connfd;
@@ -61,8 +74,8 @@ void doit(int ctopfd)
   char *ptosfd;
   struct stat sbuf;
   char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
-  char filename[MAXLINE], hostname[MAXLINE], port[MAXLINE], request_buf[MAXLINE];
-  int content_length;
+  char filename[MAXLINE], hostname[MAXLINE], port[MAXLINE], request_buf[MAXLINE], header_buf[2*MAXLINE];
+  int header_size, content_length, *size_arr;
   rio_t client_rio, server_rio; // 클라이언트와 통신하는 리오, 엔드 서버와 통신하는 리오
 
   /*Read request line and headers*/
@@ -80,7 +93,20 @@ void doit(int ctopfd)
     return;
   }
   parse_uri(uri, filename, hostname, port);
-  printf("%s\n%s %s %s %s %s\n", uri, method, hostname, version, port, filename);
+  printf("%s\n%s %s %s %s %s\n", uri, method, hostname, version, port, filename);   
+
+  // 클라이언트로부터 정보 다 받아왔으니 해당 정보로 캐시 조회
+  if (!rootp) // 캐시가 비어있지 않은 경우에만
+  {
+    cache *c = search_cache(uri);
+    if(!c) {
+      send_cache(c, ctopfd);
+      connect_prev_next(c);
+      connect_root(c);
+    }
+    return;
+  }
+    
 
 
   // 엔드 서버랑 통신
@@ -93,16 +119,22 @@ void doit(int ctopfd)
 
   // 리스폰스 헤더 받고 content-length 저장
   Rio_readinitb(&server_rio, ptosfd);
-  content_length = read_responsehdrs(&server_rio, ctopfd);
+  size_arr = read_responsehdrs(&server_rio, ctopfd);  // 클라이언트한테 리스폰스 헤더 전송
+  header_size = size_arr[0];
+  content_length = size_arr[1];
   printf("%d\n", content_length);
   
   // 리스폰스 바디 받아야함
+  cache *new_cache = (cache *)calloc(1, sizeof(cache));
+  char *response_ptr = (char *)malloc(header_size + content_length);
+
+
   char saver[MAXLINE];
   ssize_t n;
   ssize_t size = 0;
   while((n = Rio_readnb(&server_rio, saver, MAXLINE)) > 0)
   {
-    Rio_writen(ctopfd, saver, n);
+    Rio_writen(ctopfd, saver, n); // 클라이언트한테 리스폰스 바디 전송
     size += n;
   }
   printf("sending msg size: %ld\n", size);
@@ -187,28 +219,33 @@ void read_requesthdrs(rio_t *rp, char *fd, char *request_buf, char *hostname, ch
 }
 
 // 리스폰스 헤더 읽고 content-length 리턴
-int read_responsehdrs(rio_t *rp, char *fd)
+int *read_responsehdrs(rio_t *rp, char *fd, char *header_buf)
 {
   char buf[MAXLINE];
   char *ptr = NULL;
   int content_length;
-  
-
+  int header_size = 0;
+  int size[2];
+  // 다음 할일 : 헤더 버퍼에 내용 집어넣어야함
   Rio_readlineb(rp, buf, MAXLINE);
   while(strcmp(buf, "\r\n")) {
+    header_size += strlen(buf);
     if(ptr = strstr(buf, "Content-length")) {
       ptr = strchr(ptr, ':');
       ptr += 1;
       while(isspace(*ptr)) ptr += 1;
       content_length = atoi(ptr);
+      size[1] = content_length;
     }
     Rio_writen(fd, buf, strlen(buf));
     printf("%s", buf);
     Rio_readlineb(rp, buf, MAXLINE);
   }
   Rio_writen(fd, buf, strlen(buf)); // 마지막에 개행 문자 보냄. (헤더의 끝을 알림)
+  header_size += strlen(buf);
+  size[0] = header_size;
 
-  return content_length;
+  return size;
 }
 
 
@@ -261,4 +298,54 @@ void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longms
   sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
   Rio_writen(fd, buf, strlen(buf));
   Rio_writen(fd, body, strlen(body));
+}
+
+cache *search_cache(char *uri)
+{
+  cache *current = rootp;
+  while(current) {
+    if(strcasecmp(current->uri, uri)) {
+      current = current -> next;
+      continue;
+    }
+    printf("cache hit!!!!!!!!!!!!!!!!\n");
+    return current;
+  }
+  printf("cache miss,,,,,,,,,,,\n");
+  return NULL;
+}
+
+void send_cache(cache *c, int ctopfd)
+{
+  ssize_t size;
+  char *temp_ptr = c->response_ptr; // 원본 포인터 변경 고려하여 복제 포인터 사용
+  char *header_end = strstr(temp_ptr, "\r\n\r\n");
+  *header_end = '\0'; // \r를 널문자로 변환
+  size = strlen(temp_ptr) + 4;  // 널문자 까지 사이즈 계산
+  *header_end = '\r'; // 널문자를 다시 \r로 변환
+  Rio_writen(ctopfd, temp_ptr, size); // 클라이언트한테 리스폰스 헤더 전송
+  printf("send rep header completed\n");
+  temp_ptr += size;
+  Rio_writen(ctopfd, temp_ptr, c->content_length); // 클라이언트한테 리스폰스 바디 전송
+  printf("send rep body completed\n");
+}
+
+void connect_root(cache *c)
+{
+  if (!rootp) {
+    rootp = c;
+    return;
+  }
+  c->prev = NULL;
+  c->next = rootp->next;
+  if (!rootp->next)
+    rootp->next->prev = c;
+  rootp = c;
+}
+
+void connect_prev_next(cache *c)
+{
+  c->prev->next = c->next;
+  if(!c->next)
+    c->next->prev = c->prev;
 }
