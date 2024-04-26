@@ -8,7 +8,7 @@
 
 typedef struct cache
 {
-  char uri[MAXLINE];
+  char uri[MAXLINE], hostname[MAXLINE];
   int response_size;
   char *response_ptr;
   struct cache *prev, *next;
@@ -17,8 +17,6 @@ typedef struct cache
 void doit(int fd);
 void read_requesthdrs(rio_t *rp, char *fd, char *request_buf, char *hostname, char *port);
 int parse_uri(char *uri, char *filename, char *hostname, char *port);
-void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
-                 char *longmsg);
 void *thread(void *vargp);
 cache *search_cache(char *uri);
 
@@ -85,11 +83,6 @@ void doit(int ctopfd)
   Rio_readinitb(&client_rio, ctopfd);
   Rio_readlineb(&client_rio, buf, MAXLINE); // 요청 첫줄 읽기
   sscanf(buf, "%s %s %s", method, uri, version);
-  if (!(strcasecmp(method, "GET") == 0 || strcasecmp(method, "HEAD") == 0))
-  {
-    clienterror(ctopfd, method, "501", "Not implemented", "Tiny does not implement this method");
-    return;
-  }
   /* 파비콘 차단 */
   if (!strcasecmp(uri, "/favicon.ico"))
   {
@@ -255,30 +248,6 @@ int parse_uri(char *uri, char *filename, char *hostname, char *port)
   *path_idx = '/';
 
   return 0;
-}
-
-void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg)
-{
-  char buf[MAXLINE], body[MAXBUF];
-
-  /* Build the HTTP response body */
-  sprintf(body, "<html><title>Tiny Error</title>");
-  sprintf(body, "%s<body bgcolor="
-                "ffffff"
-                ">\r\n",
-          body);
-  sprintf(body, "%s%s: %s\r\n", body, errnum, shortmsg);
-  sprintf(body, "%s<p>%s: %s\r\n", body, longmsg, cause);
-  sprintf(body, "%s<hr><em>The Tiny Web server</em>\r\n", body);
-
-  /* Print the HTTP response */
-  sprintf(buf, "HTTP/1.0 %s %s\r\n", errnum, shortmsg);
-  Rio_writen(fd, buf, strlen(buf));
-  sprintf(buf, "Content-type: text/html\r\n");
-  Rio_writen(fd, buf, strlen(buf));
-  sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
-  Rio_writen(fd, buf, strlen(buf));
-  Rio_writen(fd, body, strlen(body));
 }
 
 /* 캐시 찾기 */
