@@ -1,3 +1,27 @@
+## 구현 목록
+ 
+- [x] tiny 서버 만들기
+- [x] 연습문제 11.7
+- [x] 연습문제 11.9
+- [x] 연습문제 11.10
+- [x] 연습문제 11.11
+- [x] proxy I: sequential
+- [x] proxy II: concurrent
+- [x] proxy III: cache
+---
+## 참고사항
+adder.html 을 따로 만들지 않고
+adder.c에서 form 태그를 보내주도록 하였습니다.
+
+
+## 점수
+basic: 40 + concurrency: 15 + cache: 15 = 70
+
+![image](https://github.com/SWJungle/P8-Week04-06/assets/80662781/0c55ec1a-53c7-4314-8440-811a59596583)
+
+
+
+
 ####################################################################
 # CS:APP Proxy Lab
 #
